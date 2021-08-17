@@ -1,0 +1,227 @@
+---
+title: "Tutorial_5_markdown"
+date: "4/22/2021"
+output: word_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+library(R.utils);
+library(tidyverse);
+library(SummarizedExperiment);
+library(dplyr)
+
+library ("pheatmap")
+library ("RColorBrewer")
+
+BiocManager::install('RUVSeq')
+library(RUVSeq);
+
+BiocManager::install("biomaRt")
+```
+
+
+
+```{r}
+chosen_genes <- read_csv("more data/NIHMS969176-supplement-2.csv")
+
+
+coldata <- read_tsv("data/E-MTAB-5783-experiment-design.tsv")
+colnames(coldata)[2] <- "disease"
+
+coldata$disease <- gsub(" ", "_", coldata$disease)
+coldata <- coldata %>% mutate(disease = ifelse(disease == "Crohn's_disease", 'CD','Control'))
+coldata$disease <- relevel(factor(coldata$disease), "Control")
+levels(coldata$disease)
+```
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+countdata <- read_tsv("data/E-MTAB-5783-raw-counts.tsv")
+names(countdata) <- c('Gene_ID', 'Gene_Name', rownames(coldata))
+
+# if we want to do the DEA only on the genes from the article
+#countdata <- countdata %>% filter(Gene_ID %in% c(chosen_genes$ensembl_gene_id))
+
+control_genes <- read_csv("more data/Housekeeping_GenesHuman.csv")
+colnames(control_genes)[1] <- "ensembl_transcript_id"
+
+library(biomaRt)
+mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+results <- getBM(attributes = c("ensembl_gene_id", "ensembl_transcript_id"),
+                 filters = "ensembl_transcript_id", values = c(control_genes$ensembl_transcript_id),
+                 mart = mart)
+df = merge(x=control_genes,y=results,by="ensembl_transcript_id")
+
+control_genes <- intersect(df$ensembl_gene_id , countdata$Gene_ID)
+
+#countdata <- mutate(countdata, Gene_Name = paste(Gene_Name, Gene_ID, sep = "_"))
+new_counts <- countdata %>% remove_rownames %>% column_to_rownames(var = "Gene_ID") %>% as.data.frame()
+new_counts<-new_counts[complete.cases(new_counts), ] 
+new_counts = subset(new_counts, select = -c(Gene_Name))
+normalized_new_counts = RUVg(as.matrix(new_counts), control_genes, k = 1)
+normalized_new_counts = normalized_new_counts$normalizedCounts
+```
+
+
+
+Note: it is strongly preferred in R that the first level of a factor be the reference level (e.g. control, or untreated samples). If when the coldata table was assembled the untreated samples were already set as the reference, we will leave it this way, but this is not the case and we will use relevel as shown below. While levels(...) <- above was simply for renaming the character strings associated with levels, relevel is a very different function, which decides how the variables will be coded, and how contrasts will be computed. For a two-group comparison, the use of relevel to change the reference level would flip the sign of a coefficient associated with a contrast between the two groups. You don't need to relevel when your reference is set correctly. 
+
+
+We now have all the ingredients to prepare our data object in a form that is suitable for analysis, namely:
+
+-cts: a table with the read counts
+-coldata: a table with information about the samples
+
+For running DESeq2 models, you can use R’s formula notation to express any fixed-effects experimental design. DESeq2 uses the same formula notation as, for instance, the lm() function of base R.
+
+To construct the DESeqDataSet object from the matrix of counts and the sample information table, we use:
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+library("DESeq2")
+
+dds <- DESeqDataSetFromMatrix(countData = normalized_new_counts ,
+                              colData = coldata,
+                              design = ~ disease)
+dds
+head(assay(dds)) # this is how we can see the data. its like the cts matrix.
+
+nrow(dds)
+dds <- dds[rowSums(counts(dds)) > 1,]  # sum values in each row, and keep only above sum=1. keep all columns (this is the '' after the ',')
+nrow(dds)
+```
+
+The DESeqDataSet object is very similar to [SummarizedExperiment object](https://bioconductor.org/packages/release/bioc/vignettes/SummarizedExperiment/inst/doc/SummarizedExperiment.html), with a few changes. The matrix in `assay` is now accessed with `counts`.
+
+Our count matrix in the DESeqDataSet contains many rows with only zeros, and additionally many rows with only a few reads total. In order to reduce the size of the object, and to increase the speed of our functions, we can remove the rows that have no or nearly no information about the amount of gene expression. Here we apply the most minimal filtering rule: removing rows of the DESeqDataSet that have no counts, or only a single count across all samples.
+
+- colSums(cts) can show us that there is not the same number of reads in each sample, therefore we need some normalization.
+- plot(cts[,1:2]) will plot the 2 cols in the 2 axe, can show which values in each column. it can be seen that in the larger counts, there are more variance.
+
+DESeq2 offers two transformations for count data that stabilize the variance across the mean:     
+-The variance stabilizing transformation (VST) for negative binomial data with a dispersion-mean trend implemented in the vst function
+-The regularized-logarithm transformation implemented in rlog() function.
+// we need to transform the data in order to reduce the variance
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+#rld <- rlog(dds,blind = FALSE)
+#head(assay(rld), 3)
+
+vsd <- vst(dds,blind = FALSE) # good for more than 30 samples, 
+head(assay(vsd), 3)
+```
+
+In the above function calls, we specified blind = FALSE, which means that differences between cell lines and treatment (the variables in the design) will not contribute to the expected variance-mean trend of the experiment. The experimental design is not used directly in the transformation, only in estimating the global amount of variability in the counts. For a fully unsupervised transformation, one can set blind = TRUE (the default).
+
+^ in the heat map, can be seen two clusters (dark blue areas, i.e. small distance) for the untrt samples and the trt samples. the heatmap is already sorted in a way that put the rows and cols that correlated, one near the other. so we can see the clusters clearly. we can see that the untreated i one cluster, and the treated in second cluster. 
+
+In the sample distance heatmap made previously, the dendrogram at the side shows us a hierarchical clustering of the samples. Such a clustering can also be performed for the genes. Since the clustering is only relevant for genes that actually carry a signal, one usually would only cluster a subset of the most highly variable genes. Here, for demonstration, let us select the 20 genes with the highest variance across samples.
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+#rowVars: Variance estimates for each row in a matrix (each gene)
+topVarGenes <- head(order(rowVars(assay(vsd)), decreasing = TRUE), 20) # take the most variable genes (between different samples). not sure the variablity is because the treatment. maybe its because the different cells types.
+
+mat  <- assay(vsd)[topVarGenes, ] # topVarGenes its just indexes of rows. mat contain the values.
+mat<-mat-rowMeans(mat) # reduce the mean. kind of normalization.
+anno <- as.data.frame(colData(vsd)[, c("disease")]) # anno = df of the coldData
+pheatmap(mat, annotation_col = anno)
+
+```
+
+// the heatmap shows the 20 genes (in rows) and the samples (in cols). we can see 2 clusters (treated and untreated). one of the treated sample (the right one) is not in the cluster of the treated (the 3 left samples). it can be seen that it happen to the blue cell type (N080611). This clusters will change due to number of top genes we take. 
+// we did this analysis in order to understand if the variation of same gene between different samples are mainly because of the treatment. but we can't say it confidentially from the heatmap.
+Treatment status and cell line information are shown with colored bars at the top of the heatmap. Blocks of genes that covary across patients.
+
+### The differential expression pipeline
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+dds_analysis <- DESeq(dds)
+res <- results(dds_analysis, alpha = 0.1)
+summary(res)
+head(res[ order(res$padj), ])
+#mcols(res, use.names = TRUE)
+```
+
+
+```{r}
+#resLFC <- lfcShrink(dds_analysis , coef="condition_treated_vs_untreated", type="apeglm")
+#resLFC
+
+#sum(res$padj < 0.1, na.rm=TRUE)
+
+
+res05 <- results(dds, alpha=0.05)
+summary(res05)
+sum(res05$padj < 0.05, na.rm=TRUE)
+```
+
+// in 'res' we can see the results of the differential expression. it calced the log2 for change of trt to untrt. he model the counts, and calc how much the trt change compare to untrt. pval<0.05 means we ignore the H0.
+we also calc the p-value where the H0 is that log2 FC == 0 (i.e., there is no change between the trt to untrt).
+padj: adjustment to multiple testing.
+'summary(res)' shows that 12% has LFC>0 (log fold change, i.e. the term increased in the pass from untrt->trt), 9.7% decreased. no outliers. and low counts means that 29% from the genes were filtered out because they had mean_count<5. 
+
+
+If we lower the false discovery rate threshold (from 0.1 to 0.05), we should also inform the results() function about it, so that the function can use this threshold for the optimal independent filtering that it performs:
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+res.05 <- results(dds_analysis, alpha = 0.05)
+table(res.05$padj < 0.05)
+summary(res.05)
+```
+
+If we want to raise the log2 fold change threshold, so that we test for genes that show more substantial changes due to treatment, we simply supply a value on the log2 scale. For example, by specifying lfcThreshold = 1, we test for genes that show significant effects of treatment on gene counts more than doubling or less than halfing, because 2^1=2.
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+resLFC1 <- results(dds_analysis, lfcThreshold=1)
+table(resLFC1$padj<0.1)
+```
+
+
+Now we will see differential by the cell type
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+results(dds_analysis, contrast = c("cell", "N061011", "N61311"))
+```
+
+We subset the results table to the genes with FDR<0.1 and then sort it by the log2 fold change estimate to get the significant genes with the strongest down-regulation:
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+resSig <- subset(res, padj < 0.1)
+head(resSig[ order(resSig$log2FoldChange), ])
+```
+
+The genes with the strongest up-regulation due to treatment:
+
+```{r, eval=TRUE, echo=TR+-UE, warning=FALSE, message=FALSE}
+
+up<-head(resSig[ order(resSig$log2FoldChange, decreasing = TRUE), ])
+
+```
+
+```{r}
+remotes::install_github("danioreo/fastman")
+library(fastman);
+qq_plot_data <- res[which((!is.na(res$pvalue))),]
+
+qq <- fastman::fastqq(
+  qq_plot_data,
+  p = "pvalue",
+  lambda = T)
+```
+
+
+### Exporting the results
+export to file
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+resOrdered <- res[order(res$pvalue),]
+head(resOrdered)
+resOrderedDF <- as.data.frame(resOrdered)[1:100, ]
+write.csv(resOrderedDF, file = "results.csv")
+
+```
+

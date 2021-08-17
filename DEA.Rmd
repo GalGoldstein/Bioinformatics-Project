@@ -2,7 +2,7 @@
 title: "Project"
 output: html_document
 editor_options: 
-  chunk_output_type: console
+  chunk_output_type: inline
 ---
 
 ```{r setup, include=FALSE}
@@ -34,12 +34,104 @@ levels(coldata$disease)
 ```
 
 
-```{r}
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
 countdata <- read_tsv("data/E-MTAB-5783-raw-counts.tsv")
+names(countdata) <- c('Gene_ID', 'Gene_Name', rownames(coldata))
+countdata <- mutate(countdata, Gene_Name = paste(Gene_Name, Gene_ID, sep = "_"))
+
+new_counts <- countdata %>% remove_rownames %>% column_to_rownames(var = "Gene_Name") %>% as.data.frame()
+
+new_counts[["Gene_ID"]] <- NULL
 ```
 
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+library("DESeq2")
+
+dds <- DESeqDataSetFromMatrix(countData = new_counts,
+                              colData = coldata,
+                              design = ~ disease) # shows what is the variables that we interest in, for the LR. this is how we model our counts. we insert the indepenent vars that contributes the variance between the samples. 
+
+head(assay(dds)) # this is how we can see the data. its like the cts matrix
+
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+print(paste("Original number of genes:", nrow(dds)))
+dds <- dds[rowSums(counts(dds)) > 1,]  # sum values in each row, and keep only above sum=1. keep all columns (this is the '' after the ',')
+print(paste("Post-filter number of genes:", nrow(dds)))
+```
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+#rld <- rlog(dds,blind = FALSE)
+#head(assay(rld), 3)
+
+vsd <- vst(dds,blind = FALSE) # good for more than 30 samples, 
+head(assay(vsd), 3)
+
+dev.off()
+
+library ("pheatmap")
+library ("RColorBrewer")
+```
+
+Since the clustering is only relevant for genes that actually carry a signal, one usually would only cluster a subset of the most highly variable genes. Here, for demonstration, let us select the 20 genes with the highest variance across samples.
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+#rowVars: Variance estimates for each row in a matrix (each gene)
+topVarGenes <- head(order(rowVars(assay(vsd)), decreasing = TRUE), 20) # take the most variable genes (between different samples). not sure the variablity is because the treatment. maybe its because the different cells types.
+
+mat  <- assay(vsd)[topVarGenes, ] # topVarGenes its just indexes of rows. mat contain the values.
+temp_names_df = as.data.frame(rownames(mat))
+colnames(temp_names_df) <- c("Gene_Name")
+temp_names_df <- temp_names_df %>% separate(Gene_Name, c("Gene_Name", "GeneId"), sep = "_")
+rownames(mat) <- temp_names_df$Gene_Name  
+
+mat<-mat-rowMeans(mat) # reduce the mean. kind of normalization.
+# mat <- t(scale(t(mat))) # needed scale?
+
+anno <- as.data.frame(colData(vsd)[, c("disease")]) # anno = df of the coldData
+names(anno) <- c('disease')
+
+rownames(anno) <- colnames(vsd)
+pheatmap(mat, annotation_col = anno,fontsize = 6,
+         fontsize_row = 7,main = paste(
+             "Heatmap of the 20 genes with the highest variance across samples"))
+
+```
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+
+dds_analysis <- DESeq(dds)
+#Calling results without any arguments will extract the estimated log2 fold changes and p values for the last variable in the design formula (design = ~ cell + dex)
+res <- results(dds_analysis, alpha = 0.1)
+res
+
+#As res is a data frame that carries also a metadata with information on the meaning of the columns:
+mcols(res, use.names = TRUE)
+summary(res)
+```
 
 ```{r}
+# Save DE analysis results
+csv_path <- paste("DE_alpha0.1.csv")
+write.csv(as.data.frame(res),
+  csv_path,
+  row.names = T
+)
+```
+
+```{r}
+print(summary(res))
+
+print(table(res$padj < 0.05))
+
 
 ```
 
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+res.05 <- results(dds_analysis, alpha = 0.05)
+table(res.05$padj < 0.05)
+summary(res.05)
+```
