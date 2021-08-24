@@ -1,0 +1,303 @@
+---
+title: "Final Project - Introduction to Bioinformatics"
+output:
+  html_notebook: default
+---
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+if ("fastman" %in% rownames(installed.packages()) == FALSE) {
+  pacman::p_load("remotes")
+  remotes::install_github("danioreo/fastman")
+}
+library(fastman);
+
+
+if ("RUVSeq" %in% rownames(installed.packages()) == FALSE) {
+  BiocManager::install('RUVSeq')
+}
+library(RUVSeq);
+
+if ("biomaRt" %in% rownames(installed.packages()) == FALSE) {
+  BiocManager::install('biomaRt')
+}
+library(biomaRt);
+
+if ("EnhancedVolcano" %in% rownames(installed.packages()) == FALSE) {
+  BiocManager::install("EnhancedVolcano")
+}
+
+if ("MatrixGenerics" %in% rownames(installed.packages()) == FALSE) {
+  BiocManager::install("MatrixGenerics")
+  BiocManager::install("sparseMatrixStats")
+  BiocManager::install("DelayedMatrixStats")
+}
+
+library("MatrixGenerics");
+library(R.utils);
+library(tidyverse);
+library(SummarizedExperiment);
+library(dplyr)
+library ("pheatmap")
+library ("RColorBrewer")
+library("EnhancedVolcano")
+library("DESeq2")
+```
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+tentative.normalization<-function(myMatrix, npar) 
+{ 
+  maxs <- apply(myMatrix, npar, max) 
+  if (npar == 1) { 
+    normalizedMat <- myMatrix / maxs 
+    return(normalizedMat)
+  } else if (npar == 2) { 
+  normalizedMat <- t(t(myMatrix) / maxs) 
+  return(normalizedMat) } }
+
+add_gene_name_to_index <- function (df, name_id_mapping){
+  df <- df %>% rownames_to_column(var = "Gene_ID")
+  df <- inner_join(df, name_id_mapping, by = "Gene_ID")
+  df <- mutate(df, Gene_Name = paste(Gene_ID, Gene_Name, sep = "_"))
+  df <- df %>% remove_rownames %>% column_to_rownames(var = "Gene_Name") %>% as.data.frame()
+  df = subset(df, select = -c(Gene_ID))
+}
+```
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+# Load summary of the expression results 
+load("data/E-MTAB-5783-atlasExperimentSummary.Rdata")
+coldata <- as.data.frame(colData(experimentSummary$rnaseq))
+
+coldata$disease <- gsub(" ", "_", coldata$disease)
+coldata <- coldata %>% mutate(disease = ifelse(disease == "Crohn's_disease", 'CD','Control'))
+coldata$disease <- relevel(factor(coldata$disease), "Control")
+levels(coldata$disease)
+```
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+countdata <- read_tsv("data/E-MTAB-5783-raw-counts.tsv")
+countdata <- countdata[, c('Gene ID', 'Gene Name',rownames(coldata))]
+names(countdata) <- gsub(" ", "_", names(countdata))
+name_id_mapping = countdata[c('Gene_ID', 'Gene_Name')]
+
+new_counts <- countdata %>% remove_rownames %>% column_to_rownames(var = "Gene_ID") %>% as.data.frame()
+new_counts = subset(new_counts, select = -c(Gene_Name))
+new_counts<-new_counts[complete.cases(new_counts), ] 
+
+# if we want to do the DEA only on the 6354 genes from the article
+chosen_genes <- read_csv("supplement data/supplement-2.csv")
+new_counts <- new_counts %>% filter(rownames(new_counts) %in% c(chosen_genes$ensembl_gene_id))
+```
+
+# The differential expression pipeline
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+dds <- DESeqDataSetFromMatrix(countData = new_counts ,
+                              colData = coldata,
+                              design = ~ disease)
+
+print(paste("Original number of genes:", nrow(dds)))
+dds <- dds[rowSums(counts(dds)) > 1,]
+print(paste("Post-filter number of genes:", nrow(dds)))
+```
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+dds <- estimateSizeFactors(dds)
+
+normlzd_dds <- counts(dds, normalized=T)
+
+# Variance Stabilizing transformation
+vsd <- vst(dds, blind = T)
+
+# extract the vst matris from the object
+vsd_mat <- assay(vsd)
+
+# compute pairwise correlation values
+vsd_cor <- cor(vsd_mat)
+```
+
+
+## PCA anaylsis
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+pca_plot = plotPCA(vsd, intgroup = "disease")
+
+pca_plot + scale_color_manual(values=c("mediumpurple1","darkolivegreen3"))+
+  xlab("PC1") +
+  ylab("PC2") +
+  ggtitle("PCA analysis for 68 samples") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+## Heatmap of all genes
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+heat_colors <- brewer.pal(13, "RdBu")
+disease_colors = list(disease=c(CD = "darkolivegreen3", Control = "mediumpurple1"))
+
+
+pheatmap(assay(vsd),
+        color = heat_colors,annotation_colors = disease_colors, border_color=NA,
+        cluster_cols = T, cluster_rows = T, scale="row",treeheight_row=0,
+        show_rownames = F, show_colnames = F,
+        annotation = dplyr::select(coldata, disease),
+        ,main = paste(
+             "Heatmap of normalized raw counts of all genes"))
+```
+
+## High variance genes
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+topVarGenes <- head(order(rowVars(assay(vsd)), decreasing = TRUE), 20)
+mat  <- assay(vsd)[topVarGenes, ]
+mat<-mat-rowMeans(mat) # reduce the mean. kind of normalization.
+mat = add_gene_name_to_index(data.frame(mat), name_id_mapping)
+
+anno <- as.data.frame(colData(vsd)[, c("disease")]) # anno = df of the coldData
+names(anno) <- c('disease')
+rownames(anno) <- colnames(vsd)
+
+pheatmap(mat, show_colnames = F, color = heat_colors,annotation_colors = disease_colors, annotation_col = anno,fontsize_row = 7,main = paste(
+             "Heatmap of the 20 genes with the highest variance across samples"))
+```
+
+## Significant genes Heatmap
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+dds <- DESeq(dds)
+res <-results(dds)
+summary(res)
+res0.1 <- subset(res, padj < 0.1)
+res0.1 <- res0.1[order(res0.1$padj),]
+```
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+res0.1_data <- data.frame(normlzd_dds[rownames(res0.1), ])
+res0.1_data = add_gene_name_to_index(res0.1_data, name_id_mapping)
+
+pheatmap(res0.1_data,
+        color = heat_colors,annotation_colors = disease_colors,
+        cluster_rows = T, border_color=NA,cluster_cols = T,
+        show_rownames = F, show_colnames = F, treeheight_row  =0,
+        annotation = dplyr::select(coldata, disease),
+        scale = "row",
+         fontsize_row = 7,main = paste(
+             "Heatmap of all significant genes (p-adjustment < 0.1) across samples"))
+```
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+res0.1_data_top_20 <- data.frame(normlzd_dds[rownames(head(res0.1, n=20)), ])
+res0.1_data_top_20 = add_gene_name_to_index(res0.1_data_top_20, name_id_mapping)
+
+pheatmap(res0.1_data_top_20,
+        color = heat_colors,annotation_colors = disease_colors,
+        cluster_rows = T,
+        show_rownames = T, show_colnames = F,
+        annotation = dplyr::select(coldata, disease),
+        scale = "row",
+         fontsize_row = 7,main = paste(
+             "20 most siginficant genes (p-adjustment < 0.1) across samples"))
+```
+
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+top_20 <- res0.1_data_top_20 %>% rownames_to_column(var = "ensgene")
+top_20 <- gather(top_20, key = "samplename", value = "normalized_counts", 2:69)
+top_20 <- inner_join(top_20, rownames_to_column(coldata, var  = "samplename"), by = "samplename")
+
+ggplot(top_20) +
+  geom_point(aes(x = ensgene, y = normalized_counts, color =  disease)) +
+  scale_y_log10() + scale_color_manual(values=c("mediumpurple1","darkolivegreen3"))+
+  xlab("Genes") +
+  ylab("Normalized Counts") +
+  ggtitle("20 most siginficant genes (p-adjustment < 0.1) across samples") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+## Upregulated and downregulated genes
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+up <- head(res0.1[order(res0.1$log2FoldChange, decreasing = TRUE), ], 10)
+up <- subset(up, log2FoldChange > 0)
+up_data <- data.frame(normlzd_dds[rownames(up), ])
+up_data = add_gene_name_to_index(up_data, name_id_mapping)
+
+print("Upregulated genes:")
+print(rownames(up_data))
+```
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+down<-head(res0.1[order(res0.1$log2FoldChange, decreasing = FALSE), ], 10)
+down <- subset(down, log2FoldChange < 0)
+down_with_names <- data.frame(normlzd_dds[rownames(down), ])
+down_with_names = add_gene_name_to_index(down_with_names, name_id_mapping)
+
+print("Downregulated genes:")
+print(rownames(down_with_names))
+```
+
+## Volcano plot
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+df = data.frame(p = res$padj, fc = res$log2FoldChange, Gene_ID=rownames(res))
+df <- inner_join(df, name_id_mapping, by = "Gene_ID")
+
+EnhancedVolcano(df, lab = df$Gene_Name, labSize=3.5, x='fc', y='p', pCutoff = 0.1, FCcutoff = 2, pointSize=2, title = 'DEA Volcano Plot: CD vs. Control', xlim=c(-4.5,4.5), ylim=c(0,20), subtitle="")
+```
+
+## QQ plot
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+qq_plot_data <- res[which((!is.na(res$pvalue))),]
+
+qq <- fastman::fastqq(
+  qq_plot_data,
+  p = "pvalue",
+  lambda = T,  main = paste("QQ plot"))
+```
+
+```{r eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE}
+# add HKG normalization
+control_genes <- read_csv("supplement data/Housekeeping_GenesHuman.csv")
+colnames(control_genes)[1] <- "ensembl_transcript_id"
+mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+results <- getBM(attributes = c("ensembl_gene_id", "ensembl_transcript_id"),
+                 filters = "ensembl_transcript_id", values = c(control_genes$ensembl_transcript_id),
+                 mart = mart)
+control_genes = merge(x=control_genes,y=results,by="ensembl_transcript_id")
+control_genes <- intersect(control_genes$ensembl_gene_id , rownames(new_counts))
+hkg_new_counts = RUVg(as.matrix(new_counts), control_genes, k = 1)
+hkg_new_counts = hkg_new_counts$normalizedCounts
+
+hkg_dds <- DESeqDataSetFromMatrix(countData = hkg_new_counts ,
+                              colData = coldata,
+                              design = ~ disease)
+hkg_dds <- hkg_dds[rowSums(counts(hkg_dds)) > 1,]
+
+hkg_dds <- DESeq(hkg_dds)
+res.hkg_dds <-results(hkg_dds)
+summary(res.hkg_dds)
+
+qq_plot_data <- res.hkg_dds[which((!is.na(res.hkg_dds$pvalue))),]
+
+qq <- fastman::fastqq(
+  qq_plot_data,
+  p = "pvalue",
+  lambda = T,  main = paste("QQ plot"))
+```
+
+
+### Exporting the results
+export to file
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
+# resOrdered <- res[order(res$pvalue),]
+# head(resOrdered)
+# resOrderedDF <- as.data.frame(resOrdered)[1:100, ]
+# write.csv(resOrderedDF, file = "results.csv")
+
+```
+
