@@ -1,14 +1,22 @@
 ---
-title: "R Notebook"
-output: html_notebook
+title: "Final Project - Introduction to Bioinformatics"
+output:
+  html_notebook: default
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
-
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
-
-```{r}
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
 # Libraries we will use
+
+if ("ggforce" %in% rownames(installed.packages()) == FALSE) {
+  install.packages("ggforce")
+}
+library(ggforce)
+
+if ("WGCNA" %in% rownames(installed.packages()) == FALSE) {
+  BiocManager::install("WGCNA")
+}
+library(WGCNA)
+
 library(RSQLite)
 library(Rcpp)
 library(BiocManager)
@@ -18,16 +26,19 @@ library(readr)
 library(DESeq2)
 library(impute)
 library(magrittr)
-library(WGCNA)
 library(limma)
 library(ggplot2)
 library(gridExtra)
+```
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
 
   # Load according to subgroup type
   
   countdata <- read_tsv("data/E-MTAB-5783-raw-counts.tsv") %>% tibble::column_to_rownames("Gene ID")
   data_file <- readr::read_tsv("data/E-MTAB-5783-experiment-design.tsv")
-  chosen_genes <- read_csv("data/supplement-2.csv")
+  chosen_genes <- read_csv("supplement data/supplement-2.csv")
   
   subgroupType <- 1
   
@@ -36,23 +47,20 @@ library(gridExtra)
     countdata <- subset(countdata, rownames(countdata) %in% chosen_genes$ensembl_gene_id)
   }
   
-  countdata <- countdata %>%
-  dplyr::select(data_file$Run)
+  countdata <- countdata %>% dplyr::select(data_file$Run)
   
   spec(data_file)
 
-  data_file <- data_file %>%
-   dplyr::mutate(
+  data_file <- data_file %>% 
+    dplyr::mutate(
       time_point = dplyr::case_when(
        stringr::str_detect(`Sample Characteristic[disease]`, "Crohn's disease") ~ "CD",
-        stringr::str_detect(`Sample Characteristic[disease]`, "normal") ~ "NORMAL"
+       stringr::str_detect(`Sample Characteristic[disease]`, "normal") ~ "NORMAL"
       ),
       time_point = as.factor(time_point)
-  )
+    )
   
-  countdata <- round(countdata) %>%
-  as.data.frame() %>%
-  dplyr::filter(rowSums(.) >= 400)
+  countdata <- round(countdata) %>% as.data.frame() %>% dplyr::filter(rowSums(.) >= 400)
   
   
   dds <- DESeqDataSetFromMatrix(
@@ -65,8 +73,7 @@ library(gridExtra)
   # function from the `DESEq2` R package
   dds_norm <- vst(dds)
   
-  normalized_counts <- assay(dds_norm) %>%
-  t()
+  normalized_counts <- assay(dds_norm) %>% t()
 
 
   sft <- pickSoftThreshold(normalized_counts, dataIsExpr = TRUE,
@@ -87,6 +94,8 @@ library(gridExtra)
     ggtitle("Scale independence") +
     theme_classic()
   
+  cor <- WGCNA::cor
+  
   bwnet <- blockwiseModules(normalized_counts,
   maxBlockSize = 5000, # What size chunks (how many genes) the calculations should be run in
   TOMType = "unsigned", # topological overlap matrix
@@ -95,6 +104,8 @@ library(gridExtra)
   mergeCutHeight = 0.25,
   saveTOMs = FALSE,
   verbose = 3)
+  
+  cor<-stats::cor
   
   # Calculated clusters from the CE
   module_eigengenes <- bwnet$MEs
@@ -118,11 +129,7 @@ library(gridExtra)
   df <- subset(module_eigengenes, select = c(moduleName))
   ggplot(
   module_eigengenes,
-  aes(
-    x = Samples,
-    y = ME5,
-    color = Samples
-  )
+  aes(x = Samples, y = ME5, color = Samples)
 ) +
   geom_boxplot(width = 0.2, outlier.shape = NA) +
   ggforce::geom_sina(maxwidth = 0.3) +
@@ -141,31 +148,23 @@ library(gridExtra)
   Samples <- data_file$Run
   
   g5 <- ggplot(module_eigengenes, aes(x=Samples, y=ME5, color = Group)) +
-      geom_point() + scale_color_manual(values=c("darkolivegreen3", "mediumpurple1"))
+      geom_point() + scale_color_manual(values=c("darkolivegreen3", "mediumpurple1")) +  theme(axis.text.x=element_blank())
   
   g4 <- ggplot(module_eigengenes, aes(x=Samples, y=ME4, color = Group)) +
-    geom_point() + scale_color_manual(values=c("darkolivegreen3", "mediumpurple1"))
+    geom_point() + scale_color_manual(values=c("darkolivegreen3", "mediumpurple1")) +  theme(axis.text.x=element_blank())
   
   g3 <- ggplot(module_eigengenes, aes(x=Samples, y=ME3, color = Group)) +
-    geom_point() + scale_color_manual(values=c("darkolivegreen3", "mediumpurple1"))
+    geom_point() + scale_color_manual(values=c("darkolivegreen3", "mediumpurple1")) +  theme(axis.text.x=element_blank())
   
   g2 <- ggplot(module_eigengenes, aes(x=Samples, y=ME2, color = Group)) +
-    geom_point() + scale_color_manual(values=c("darkolivegreen3", "mediumpurple1"))
+    geom_point() + scale_color_manual(values=c("darkolivegreen3", "mediumpurple1")) +  theme(axis.text.x=element_blank())
   
   g1 <- ggplot(module_eigengenes, aes(x=Samples, y=ME1, color = Group)) +
-    geom_point() + scale_color_manual(values=c("darkolivegreen3", "mediumpurple1"))
+    geom_point() + scale_color_manual(values=c("darkolivegreen3", "mediumpurple1")) +  theme(axis.text.x=element_blank())
   
   g0 <- ggplot(module_eigengenes, aes(x=Samples, y=ME0, color = Group)) +
-    geom_point() + scale_color_manual(values=c("darkolivegreen3", "mediumpurple1"))
+    geom_point() + scale_color_manual(values=c("darkolivegreen3", "mediumpurple1")) +  theme(axis.text.x=element_blank())
   
   grid.arrange(g0, g1, g2, g3, g4, g5)
 
-
-
 ```
-
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
-
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
-
-The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
