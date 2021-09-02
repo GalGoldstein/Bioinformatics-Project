@@ -3,6 +3,7 @@ title: "Final Project - Introduction to Bioinformatics"
 output:
   html_notebook: default
 ---
+# ----- Differential Expresion Analysis ----- 
 
 ```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
 if ("fastman" %in% rownames(installed.packages()) == FALSE) {
@@ -17,29 +18,32 @@ if ("RUVSeq" %in% rownames(installed.packages()) == FALSE) {
 }
 library(RUVSeq);
 
+
 if ("biomaRt" %in% rownames(installed.packages()) == FALSE) {
   BiocManager::install('biomaRt')
 }
 library(biomaRt);
 
+
 if ("EnhancedVolcano" %in% rownames(installed.packages()) == FALSE) {
   BiocManager::install("EnhancedVolcano")
 }
+library("EnhancedVolcano")
+
 
 if ("MatrixGenerics" %in% rownames(installed.packages()) == FALSE) {
   BiocManager::install("MatrixGenerics")
   BiocManager::install("sparseMatrixStats")
   BiocManager::install("DelayedMatrixStats")
 }
-
 library("MatrixGenerics");
+
 library(R.utils);
 library(tidyverse);
 library(SummarizedExperiment);
 library(dplyr)
 library ("pheatmap")
 library ("RColorBrewer")
-library("EnhancedVolcano")
 library("DESeq2")
 ```
 
@@ -76,7 +80,6 @@ coldata$disease <- relevel(factor(coldata$disease), "Control")
 levels(coldata$disease)
 ```
 
-
 ```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
 countdata <- read_tsv("data/E-MTAB-5783-raw-counts.tsv")
 countdata <- countdata[, c('Gene ID', 'Gene Name',rownames(coldata))]
@@ -87,12 +90,12 @@ new_counts <- countdata %>% remove_rownames %>% column_to_rownames(var = "Gene_I
 new_counts = subset(new_counts, select = -c(Gene_Name))
 new_counts<-new_counts[complete.cases(new_counts), ] 
 
-# if we want to do the DEA only on the 6354 genes from the article
+# we want to do the DEA only on the 6354 genes from the reference paper
 chosen_genes <- read_csv("supplement data/supplement-2.csv")
 new_counts <- new_counts %>% filter(rownames(new_counts) %in% c(chosen_genes$ensembl_gene_id))
 ```
 
-# The differential expression pipeline
+## The DE pipeline
 ```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
 dds <- DESeqDataSetFromMatrix(countData = new_counts ,
                               colData = coldata,
@@ -103,16 +106,15 @@ dds <- dds[rowSums(counts(dds)) > 1,]
 print(paste("Post-filter number of genes:", nrow(dds)))
 ```
 
-
 ```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
 dds <- estimateSizeFactors(dds)
 
 normlzd_dds <- counts(dds, normalized=T)
 
-# Variance Stabilizing transformation
+# vsd: Variance Stabilizing transformation
 vsd <- vst(dds, blind = T)
 
-# extract the vst matris from the object
+# extract vst matrix
 vsd_mat <- assay(vsd)
 
 # compute pairwise correlation values
@@ -289,15 +291,3 @@ qq <- fastman::fastqq(
   p = "pvalue",
   lambda = T,  main = paste("QQ plot"))
 ```
-
-
-### Exporting the results
-export to file
-```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
-# resOrdered <- res[order(res$pvalue),]
-# head(resOrdered)
-# resOrderedDF <- as.data.frame(resOrdered)[1:100, ]
-# write.csv(resOrderedDF, file = "results.csv")
-
-```
-

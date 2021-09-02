@@ -3,6 +3,7 @@ title: "Final Project - Introduction to Bioinformatics"
 output:
   html_notebook: default
 ---
+# ----- Gene Co-expression Analysis ----- 
 
 ```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
 # Libraries we will use
@@ -35,7 +36,6 @@ library(gridExtra)
 ```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
 
   # Load according to subgroup type
-  
   countdata <- read_tsv("data/E-MTAB-5783-raw-counts.tsv") %>% tibble::column_to_rownames("Gene ID")
   data_file <- readr::read_tsv("data/E-MTAB-5783-experiment-design.tsv")
   chosen_genes <- read_csv("supplement data/supplement-2.csv")
@@ -94,6 +94,11 @@ library(gridExtra)
     ggtitle("Scale independence") +
     theme_classic()
   
+
+```
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
   cor <- WGCNA::cor
   
   bwnet <- blockwiseModules(normalized_counts,
@@ -130,11 +135,18 @@ library(gridExtra)
   ggplot(
   module_eigengenes,
   aes(x = Samples, y = ME5, color = Samples)
-) +
+  ) +
   geom_boxplot(width = 0.2, outlier.shape = NA) +
   ggforce::geom_sina(maxwidth = 0.3) +
   scale_color_manual(values=c("darkolivegreen3", "mediumpurple1"))+
   theme_classic()
+
+
+```
+
+
+
+```{r, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE}
   
   head(module_eigengenes)
   gene_module_key <- tibble::enframe(bwnet$colors, name = "gene", value = "module") %>%
@@ -166,5 +178,4 @@ library(gridExtra)
     geom_point() + scale_color_manual(values=c("darkolivegreen3", "mediumpurple1")) +  theme(axis.text.x=element_blank())
   
   grid.arrange(g0, g1, g2, g3, g4, g5)
-
 ```
