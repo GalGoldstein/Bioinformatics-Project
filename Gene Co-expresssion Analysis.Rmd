@@ -83,7 +83,7 @@ library(gridExtra)
   sft_df <- data.frame(sft$fitIndices) %>%
   dplyr::mutate(model_fit = -sign(slope) * SFT.R.sq)
 
-
+# Scale independence plot
   ggplot(sft_df, aes(x = Power, y = model_fit, label = Power)) +
     geom_point() +
     geom_text(nudge_y = 0.1) +
@@ -132,6 +132,8 @@ library(gridExtra)
   disease_colors <- list(disease=c(CD = "darkolivegreen3", NORMAL = "mediumpurple1"))
   Samples <- data_file$time_point
   df <- subset(module_eigengenes, select = c(moduleName))
+  
+  # plot of Module 5
   ggplot(
   module_eigengenes,
   aes(x = Samples, y = ME5, color = Samples)
